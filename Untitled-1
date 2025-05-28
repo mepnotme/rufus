@@ -1,0 +1,413 @@
+-- main.lua
+
+utilidades = require "utilidades"
+pantalla_menu = require "pantallas/menu"
+pantalla_partida = require "pantallas/partida"
+
+ANCHO_VIRTUAL = 160
+ALTO_VIRTUAL = 90
+
+function love.load()
+    utilidades.configuraVentana(ANCHO_VIRTUAL, ALTO_VIRTUAL)
+    love.graphics.setDefaultFilter("nearest", "nearest")
+    love.window.setTitle("Ovejazzz")
+    imagen_menu_titulo = love.graphics.newImage("imagenes/menu_titulo.png")
+    imagen_menu_texto_escritorio = love.graphics.newImage("imagenes/menu_texto_escritorio.png")
+    imagen_menu_texto_movil = love.graphics.newImage("imagenes/menu_texto_movil.png")
+    imagen_fondo = love.graphics.newImage("imagenes/fondo.png")
+    font_hud = love.graphics.newFont("fonts/pixelsix14.ttf", 14)    -- Fuente encontrada en: https://www.dafont.com/es/pixelsix.font
+    pantalla = "menu"
+    high_score = 0
+end
+
+function love.update(dt)
+    if pantalla == "menu" then
+        pantalla_menu.update(dt)
+    elseif pantalla == "partida" then
+        pantalla_partida.update(dt)
+    else
+        -- mostrar un error (pantalla no válida)
+        print("Pantalla no válida: " .. pantalla)
+    end
+end
+
+function love.draw()
+    utilidades.antesDeDibujar()
+    love.graphics.clear()
+    
+    if pantalla == "menu" then
+        pantalla_menu.draw()
+    elseif pantalla == "partida" then
+        pantalla_partida.draw()
+    end
+    
+    utilidades.despuesDeDibujar()
+end
+
+function love.keypressed(key)
+    if pantalla == "menu" then
+        pantalla_menu.se_ha_pulsado_una_tecla(key)
+    elseif pantalla == "partida" then
+        pantalla_partida.se_ha_pulsado_una_tecla(key)
+    end
+end
+
+function love.keyreleased(key)
+    if pantalla == "menu" then
+        pantalla_menu.se_ha_soltado_una_tecla(key)
+    elseif pantalla == "partida" then
+        pantalla_partida.se_ha_soltado_una_tecla(key)
+    end
+end
+
+-- utilidades.lua
+
+if love.system.getOS() == 'iOS' or love.system.getOS() == 'Android' then
+    mobile = true
+else
+    mobile = false
+end
+
+local utilidades = {
+    configuraVentana = function(ancho_virtual, alto_virtual)
+        utilidades.ancho_virtual = ancho_virtual
+        utilidades.alto_virtual = alto_virtual
+        love.graphics.setDefaultFilter("nearest") -- Cambiamos el filtro usado durante el escalado
+        local resolucion_pantalla_x, resolucion_pantalla_y = love.graphics.getDimensions()
+        local resolucion_ventana_x, resolucion_ventana_y = resolucion_pantalla_x * .7, resolucion_pantalla_y * .7 -- definimos el tamaño inicial de la ventana
+        love.window.setMode(
+            resolucion_ventana_x,
+            resolucion_ventana_y,
+            {
+                vsync = true,
+                resizable = true,
+                centered = true
+            }
+        )
+        love.window.setMode(resolucion_ventana_x, resolucion_ventana_y, {resizable=true, vsync=0, minwidth=utilidades.ancho_virtual, minheight=utilidades.alto_virtual})
+        utilidades.actualizaVariablesEscalado(resolucion_ventana_x, resolucion_ventana_y)
+    end,
+    actualizaVariablesEscalado = function(resolucion_x, resolucion_y)
+        local factor_escala_x = resolucion_x / utilidades.ancho_virtual
+        local factor_escala_y = resolucion_y / utilidades.alto_virtual
+        if factor_escala_x < factor_escala_y then
+            utilidades.factor_escala = factor_escala_x
+        else
+            utilidades.factor_escala = factor_escala_y
+        end
+    
+        utilidades.desplazamiento_x = (resolucion_x - utilidades.factor_escala * utilidades.ancho_virtual) / 2
+        utilidades.desplazamiento_y = (resolucion_y - utilidades.factor_escala * utilidades.alto_virtual) / 2
+    end,
+    antesDeDibujar = function()
+        -- prepara un canvas con el escalado y el desplazamiento necesarios
+        love.graphics.push()
+        love.graphics.setCanvas(mainCanvas)
+        love.graphics.translate(utilidades.desplazamiento_x, utilidades.desplazamiento_y)
+        love.graphics.scale(utilidades.factor_escala, utilidades.factor_escala)
+    end,
+    despuesDeDibujar = function()
+        -- volvemos a dibujar en la ventana principal
+        love.graphics.setCanvas()
+        love.graphics.pop()    
+    end
+}
+
+function love.resize(w, h)
+    utilidades.actualizaVariablesEscalado(w, h)
+end
+
+-- devuelve un valor decimal aleatorio entre el mínimo y máximo indicados (ambos incluidos)
+function rnd(min_value, max_value)
+    return love.math.random(min_value * 1000, max_value * 1000) / 1000
+end
+
+function colisionando(obj1, obj2)
+    return obj1.x < obj2.x + obj2.ancho and
+        obj2.x < obj1.x + obj1.ancho and
+        obj1.y < obj2.y + obj2.alto and
+        obj2.y < obj1.y + obj1.alto
+end
+
+return utilidades
+
+-- pantallas/menu.lua
+
+local heroe = {
+    -- inicio configuración
+    x = 16,         -- x del hitbox
+    y = 60,         -- y del hitbox
+    ancho = 16,     -- ancho del hitbox
+    alto = 13,      -- alto del hitbox
+    y_suelo = 60,   -- altura del suelo (posición vertical a partir de la cual ya no estamos saltando)
+    desplz_img_x = -11,
+    desplz_img_y = -50,
+    imagenes_corriendo = {
+        love.graphics.newImage("imagenes/oveja_01.png"),
+        love.graphics.newImage("imagenes/oveja_02.png"),
+        love.graphics.newImage("imagenes/oveja_03.png"),
+    },
+    imagenes_saltando = {
+        love.graphics.newImage("imagenes/oveja_04.png"),
+        love.graphics.newImage("imagenes/oveja_05.png"),
+        love.graphics.newImage("imagenes/oveja_06.png"),
+        love.graphics.newImage("imagenes/oveja_07.png"),
+    },
+    velocidad_inicial_salto = 110,
+    gravedad = 270,
+    fps = 9,
+    -- fin configuración
+    num_imagen_actual = 1,
+    velocidad_y = 0,
+    estado = "corriendo",   -- valores posibles: "corriendo", "saltando"
+    tiempo_ejecutandose = 0,
+    saltar = function()
+        if heroe.estado == "corriendo" then
+            heroe.estado = "saltando"
+            heroe.tiempo_saltando = 0
+            heroe.num_imagen_actual = 1
+            heroe.velocidad_y = heroe.velocidad_inicial_salto
+            heroe.estado = "saltando"
+        end
+    end,
+    update = function(dt)
+        heroe.tiempo_ejecutandose = heroe.tiempo_ejecutandose + dt
+
+        -- movimiento vertical durante el salto
+        if heroe.estado == "saltando" then
+            heroe.tiempo_saltando = heroe.tiempo_saltando + dt
+            heroe.y = heroe.y - heroe.velocidad_y * dt
+            heroe.velocidad_y = heroe.velocidad_y - heroe.gravedad * dt -- aplicamos la gravedad
+            -- si tocamos el suelo, dejamos de saltar
+            if heroe.y >= heroe.y_suelo then
+                heroe.estado = "corriendo"
+                heroe.tiempo_corriendo = 0
+                heroe.num_imagen_actual = 1
+                heroe.y = heroe.y_suelo
+            end
+        end
+
+        -- cambiar de fotograma
+        if heroe.estado == "corriendo" then
+            local fotograma = math.floor(heroe.tiempo_ejecutandose * heroe.fps)
+            heroe.num_imagen_actual = 1 + fotograma % #heroe.imagenes_corriendo
+        elseif heroe.estado == "saltando" then
+            if heroe.num_imagen_actual < # heroe.imagenes_saltando then
+                local fotograma = math.floor(heroe.tiempo_saltando * heroe.fps)
+                heroe.num_imagen_actual = 1 + fotograma % #heroe.imagenes_saltando
+            end
+        end
+    end,
+    draw = function()
+        love.graphics.setColor(255, 255, 255)
+        if heroe.estado == "corriendo" then
+            love.graphics.draw(heroe.imagenes_corriendo[heroe.num_imagen_actual], heroe.x + heroe.desplz_img_x, heroe.y + heroe.desplz_img_y)
+        elseif heroe.estado == "saltando" then
+            love.graphics.draw(heroe.imagenes_saltando[heroe.num_imagen_actual], heroe.x + heroe.desplz_img_x, heroe.y + heroe.desplz_img_y)
+        end
+    end,
+    draw_hitbox = function()
+        love.graphics.setColor(255, 0, 0, 0.3)
+        love.graphics.rectangle("line", heroe.x, heroe.y, heroe.ancho, heroe.alto)
+    end,
+}
+
+return heroe
+
+-- pantallas/partida.lua
+
+require "objetos/tronco"
+
+local partida = {
+    update = function(dt)
+        -- lógica de la partida
+        tiempo_partida = tiempo_partida + dt
+        
+        if salto_pulsado then
+            heroe.saltar()
+        end
+
+        -- decidimos si debemos crear un nuevo tronco
+        if tiempo_partida >= tiempo_creacion_siguiente_obstaculo then
+            table.insert(obstaculos, nuevo_tronco(164, 58))
+            tiempo_creacion_siguiente_obstaculo = tiempo_partida + rnd(tiempo_minimo_entre_obstaculos, tiempo_maximo_entre_obstaculos)
+        end
+
+        local indices_obstaculos_a_eliminar = {}    -- lista para guardar los índices de los obstáculos que se salen por la izquierda de la pantalla (los eliminaremos posteriormente)
+        -- actualizamos los obstáculos (los movemos y comprobamos colisiones)
+        for i, obstaculo in ipairs(obstaculos) do
+            obstaculo.x = obstaculo.x - heroe.velocidad_x * dt
+            -- si el obstáculos se sale por la izquierda, actualizamos los puntos e insertamos su índice en la lista indices_obstaculos_a_eliminar
+            if obstaculo.x < -10 then
+                puntos = puntos + 1
+                table.insert(indices_obstaculos_a_eliminar, i)
+            end
+            -- comprobamos si el héroe y el obstáculo están colisionando
+            if colisionando(heroe, obstaculo) then
+                if puntos > high_score then
+                    high_score = puntos
+                end
+                pantalla = "menu"
+            end
+        end
+
+        -- eliminamos los obstáculos insertados previamente en la lista indices_obstaculos_a_eliminar
+        for i=#indices_obstaculos_a_eliminar,1,-1 do
+            table.remove(obstaculos, i)
+        end
+        heroe.update(dt)
+    end,
+    draw = function()
+        -- dibujamos el frame de la partida
+        love.graphics.setColor(255, 255, 255)
+        love.graphics.draw(imagen_fondo, 0, 0)
+        love.graphics.setFont(font_hud)
+        love.graphics.setColor(246, 214, 189, 255)  -- TODO: Investigar cómo cambiar correctamente el color del font para que respete la paleta
+        love.graphics.printf("SCORE: " .. puntos, 0, 0, ANCHO_VIRTUAL, "right")
+        love.graphics.printf(" HI-SCORE: " .. high_score, 0, 0, ANCHO_VIRTUAL, "left")
+        love.graphics.setColor(255, 255, 255)
+        heroe.draw()
+        heroe.draw_hitbox()
+
+        -- dibujamos los obstáculos
+        for i, obstaculo in ipairs(obstaculos) do
+            obstaculo:draw()
+            obstaculo:draw_hitbox()
+        end
+
+    end,
+    se_ha_pulsado_una_tecla = function(tecla)
+        if tecla == "space" then
+            salto_pulsado = true
+        end
+    end,
+    se_ha_soltado_una_tecla = function(tecla)
+        if tecla == "space" then
+            salto_pulsado = false
+        end
+    end
+
+}
+
+return partida
+
+-- objetos/heroe.lua
+
+local heroe = {
+    -- inicio configuración
+    x = 16,         -- x del hitbox
+    y = 60,         -- y del hitbox
+    ancho = 16,     -- ancho del hitbox
+    alto = 13,      -- alto del hitbox
+    y_suelo = 60,   -- altura del suelo (posición vertical a partir de la cual ya no estamos saltando)
+    desplz_img_x = -11,
+    desplz_img_y = -50,
+    imagenes_corriendo = {
+        love.graphics.newImage("imagenes/oveja_01.png"),
+        love.graphics.newImage("imagenes/oveja_02.png"),
+        love.graphics.newImage("imagenes/oveja_03.png"),
+    },
+    imagenes_saltando = {
+        love.graphics.newImage("imagenes/oveja_04.png"),
+        love.graphics.newImage("imagenes/oveja_05.png"),
+        love.graphics.newImage("imagenes/oveja_06.png"),
+        love.graphics.newImage("imagenes/oveja_07.png"),
+    },
+    velocidad_inicial_salto = 110,
+    gravedad = 270,
+    fps = 9,
+    -- fin configuración
+    num_imagen_actual = 1,
+    velocidad_y = 0,
+    estado = "corriendo",   -- valores posibles: "corriendo", "saltando"
+    tiempo_ejecutandose = 0,
+    saltar = function()
+        if heroe.estado == "corriendo" then
+            heroe.estado = "saltando"
+            heroe.tiempo_saltando = 0
+            heroe.num_imagen_actual = 1
+            heroe.velocidad_y = heroe.velocidad_inicial_salto
+            heroe.estado = "saltando"
+        end
+    end,
+    update = function(dt)
+        heroe.tiempo_ejecutandose = heroe.tiempo_ejecutandose + dt
+
+        -- movimiento vertical durante el salto
+        if heroe.estado == "saltando" then
+            heroe.tiempo_saltando = heroe.tiempo_saltando + dt
+            heroe.y = heroe.y - heroe.velocidad_y * dt
+            heroe.velocidad_y = heroe.velocidad_y - heroe.gravedad * dt -- aplicamos la gravedad
+            -- si tocamos el suelo, dejamos de saltar
+            if heroe.y >= heroe.y_suelo then
+                heroe.estado = "corriendo"
+                heroe.tiempo_corriendo = 0
+                heroe.num_imagen_actual = 1
+                heroe.y = heroe.y_suelo
+            end
+        end
+
+        -- cambiar de fotograma
+        if heroe.estado == "corriendo" then
+            local fotograma = math.floor(heroe.tiempo_ejecutandose * heroe.fps)
+            heroe.num_imagen_actual = 1 + fotograma % #heroe.imagenes_corriendo
+        elseif heroe.estado == "saltando" then
+            if heroe.num_imagen_actual < # heroe.imagenes_saltando then
+                local fotograma = math.floor(heroe.tiempo_saltando * heroe.fps)
+                heroe.num_imagen_actual = 1 + fotograma % #heroe.imagenes_saltando
+            end
+        end
+    end,
+    draw = function()
+        love.graphics.setColor(255, 255, 255)
+        if heroe.estado == "corriendo" then
+            love.graphics.draw(heroe.imagenes_corriendo[heroe.num_imagen_actual], heroe.x + heroe.desplz_img_x, heroe.y + heroe.desplz_img_y)
+        elseif heroe.estado == "saltando" then
+            love.graphics.draw(heroe.imagenes_saltando[heroe.num_imagen_actual], heroe.x + heroe.desplz_img_x, heroe.y + heroe.desplz_img_y)
+        end
+    end,
+    draw_hitbox = function()
+        love.graphics.setColor(255, 0, 0, 0.3)
+        love.graphics.rectangle("line", heroe.x, heroe.y, heroe.ancho, heroe.alto)
+    end,
+}
+
+return heroe
+
+-- objetos/tronco.lua
+
+function nuevo_tronco(pos_x_inicial, pos_y_inicial)
+    local tronco = {
+        -- inicio configuración
+        x = pos_x_inicial,  -- x del hitbox
+        y = pos_y_inicial,  -- y del hitbox
+        ancho = 8,          -- ancho del hitbox
+        alto = 15,          -- alto del hitbox
+        desplz_img_x = -48,
+        desplz_img_y = -48,
+        imagenes = {
+            love.graphics.newImage("imagenes/tronco.png"),
+        },
+        fps = 7,
+        -- fin configuración
+        num_imagen_actual = 1,
+        tiempo_ejecutandose = 0,
+        update = function(self, dt)
+            -- cambiar de dibujo
+            self.tiempo_ejecutandose = self.tiempo_ejecutandose + dt
+            local fotograma = math.floor(self.tiempo_ejecutandose * self.fps)
+            self.num_imagen_actual = 1 + fotograma % #self.imagenes
+        end,
+        draw = function(self)
+            love.graphics.setColor(255, 255, 255)
+            love.graphics.draw(self.imagenes[self.num_imagen_actual], self.x + self.desplz_img_x, self.y + self.desplz_img_y)
+        end,
+        draw_hitbox = function(self)
+            love.graphics.setColor(255, 0, 0, 0.3)
+            love.graphics.rectangle("line", self.x, self.y, self.ancho, self.alto)
+        end
+    }
+
+    return tronco
+end
+
